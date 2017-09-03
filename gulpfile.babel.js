@@ -29,7 +29,7 @@ var manifest = {
     }
   },
 
-  ff: {
+  firefox: {
     "applications": {
       "gecko": {
         "id": "my-app-id@mozilla.org"
@@ -84,11 +84,13 @@ gulp.task("manifest", () => {
   return gulp.src('./manifest.json')
     .pipe(gulpif(!production, $.mergeJson({
       fileName: "manifest.json",
+      jsonSpace: " ".repeat(4),
       endObj: manifest.dev
     })))
     .pipe(gulpif(target === "firefox", $.mergeJson({
       fileName: "manifest.json",
-      endObj: manifest.ff
+      jsonSpace: " ".repeat(4),
+      endObj: manifest.firefox
     })))
     .pipe(gulp.dest(`./build/${target}`))
 });

@@ -1,258 +1,208 @@
-import ext from "./utils/ext";
-import storage from "./utils/storage";
+import ext from './utils/ext';
+import storage from './utils/storage';
+import * as Templates from './utils/templates';
+import Auth from './utils/auth';
 
-var __request_code;
-var __access_token_string;
+const auth = new Auth();
 
-var popup = document.getElementById("app");
-var troovyLoginForm = document.getElementById("troovyLoginForm");
-var userToken;
+// DOM elements.
+const popup            = document.getElementById('app');
+const optionsLink      = document.querySelector('.js-options');
+const contentWrapper   = document.querySelector('.content-wrapper');
+const contentContainer = document.getElementById('display-container');
+const loadingContainer = document.querySelector('.loading');
+const feedbackMessage  = document.getElementById('feedback-message');
 
-window.onload = function(){
-    check_auth();
-    //get_categories();
+window.onload = () => {
+  showLoading();
+  setLoadingText('');
+
+  auth.checkToken().then(() => {
+    ext.tabs.query({active: true, currentWindow: true}, tabs => {
+
+      let activeTab = tabs[0];
+
+      chrome.tabs.sendMessage(activeTab.id, {action: 'process-page'}, renderBookmark);
+    });
+    hideLoading();
+  }, () => {
+
+    let displayContainer = document.getElementById('display-container');
+
+    displayContainer.innerHTML = Templates.login();
+    hideLoading();
+  });
 };
 
-storage.get('color', function(resp) {
-  var color = resp.color;
-  if(color) {
-    popup.style.backgroundColor = color
+storage.get('color', resp => {
+  let color = resp.color;
+
+  if (color) {
+    popup.style.backgroundColor = color;
   }
 });
 
-function check_auth() {
-    storage.get('token', function(resp) {
-        var token = resp.token;
-        console.log('token found: ' + token);
-        if(token) {
-            //get_categories();
-            scan_page();
-            userToken = token;
-        } else {
-            // Show login form
-            console.log('no token found');
-            var displayContainer = document.getElementById("display-container");
-            var tmpl = login_form();
-            displayContainer.innerHTML = tmpl;
+function renderBookmark(data) {
+  let displayContainer = document.getElementById('display-container');
+  let titleContainer   = document.getElementById('title-container');
+
+  if (data) {
+    let tmpl = Templates.main(data);
+
+    titleContainer.innerHTML = '<h3 class=\'title\'>' + data.title + '</h3>';
+
+    getCategories();
+
+    displayContainer.innerHTML = tmpl;
+
+    return false;
+  }
+
+  showFeedbackMessage('Sorry, could not extract this page\'s title and URL');
+}
+
+// @ToDo: Replace storage.get method with auth module authentication one.
+function getCategories() {
+  if (auth.isAuthenticated) {
+    let token   = auth.token;
+    let xmlhttp = new XMLHttpRequest();
+
+    xmlhttp.open('GET', 'https://troovy-stage.com/api/categories', true);
+    xmlhttp.setRequestHeader('Authorization', `Bearer ${token}`);
+    xmlhttp.setRequestHeader('Accept', 'application/json');
+
+    xmlhttp.send();
+    xmlhttp.onreadystatechange = () => {
+
+      if (xmlhttp.readyState === 4) {
+        if (xmlhttp.status === 200) {
+          let response = xmlhttp.responseText;
+          let t        = JSON.parse(response);
+
+          storage.set({cacheCategories: t, cacheTime: Date.now()}, function () {
+            //callback(t);
+          });
+
+          let categoryForm = document.getElementById('category-form');
+
+          categoryForm.innerHTML = Templates.categorySelect(t);
         }
-    });
-}
-
-function scan_page() {
-    ext.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        var activeTab = tabs[0];
-        chrome.tabs.sendMessage(activeTab.id, { action: 'process-page' }, renderBookmark);
-    });
-}
-
-function make_xmlhttprequest (method, url, flag) {
-    var xmlhttp = new XMLHttpRequest();
-    xmlhttp.open(method, url, flag);
-    xmlhttp.setRequestHeader( "Content-type","application/x-www-form-urlencoded" );
-    return xmlhttp;
-}
-
-function make_xmlhttprequest_with_token (method, url, flag, token) {
-    var xmlhttp = new XMLHttpRequest();
-    xmlhttp.open(method, url, flag);
-    xmlhttp.setRequestHeader( "Authorization","Bearer " + token );
-    xmlhttp.setRequestHeader( "Accept","application/json" );
-    return xmlhttp;
-}
-
-function get_troovy_token(username,password) {
-    console.log('getting troovy token...');
-    console.log('username: ' + username + ' , password: ' + password);
-    var xmlhttp = make_xmlhttprequest ('POST', 'http://app.troovy.app/oauth/token', true);
-    //var params = 'email=' + encodeURIComponent(formLogin.username.value) + '&password=' + encodeURIComponent(formLogin.password.value);
-    var params = 'username=' + encodeURIComponent(username)
-        + '&password=' + encodeURIComponent(password)
-        + '&grant_type=password'
-        + '&client_id=2'
-        + '&client_secret=urV13VyBFn65JZL8Ckwe1VBDc38bPXtjGI4WJwM8'
-        + '&scope=*';
-    xmlhttp.send( params );
-    xmlhttp.onreadystatechange = function () {
-        //console.log('readystate run');
-        if ( xmlhttp.readyState === 4 ) {
-            if (xmlhttp.status === 200){
-                var response = xmlhttp.responseText;
-                //console.log('made it!');
-                console.log(response);
-                var t = JSON.parse(response);
-                var value = t['access_token'];
-
-                // Store our access token in local storage
-                //chrome.storage.local.set({
-                storage.set({
-                    'token': value
-                }, function() {
-                    console.log("The value stored was: " + value);
-                });
-
-                ext.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                    var activeTab = tabs[0];
-                    chrome.tabs.sendMessage(activeTab.id, { action: 'process-page' }, renderBookmark);
-                });
-            }
-            else {
-                document.getElementById("progress-icon").innerHTML = "<img height='50px' width='50px' src='failed.png'></img>";
-                document.getElementById("progress-text").innerHTML = "Authentication failed!!";
-            }
-        }
-    }
-}
-
-function get_categories() {
-    storage.get('token', function(resp) {
-        var token = resp.token;
-        if(token) {
-            var xmlhttp = make_xmlhttprequest_with_token('GET', 'http://troovy.app/api/categories', true, token);
-            xmlhttp.send();
-            xmlhttp.onreadystatechange = function () {
-                //console.log('readystate run');
-                if (xmlhttp.readyState === 4) {
-                    if (xmlhttp.status === 200) {
-                        var response = xmlhttp.responseText;
-                        var t = JSON.parse(response);
-                        storage.set({cacheCategories: t, cacheTime: Date.now()}, function() {
-                            //callback(t);
-                        });
-                        renderCategorySelect(t);
-                    }
-                }
-            }
-        }
-    });
-};
-
-// function scan_this_page () {
-//     document.getElementById("progress-icon").innerHTML = "<img height='50px' width='50px' src='images/authenticating.gif'></img>";
-//     document.getElementById("progress-text").innerHTML = "Authenticating with Troovy";
-//     get_troovy_token();
-// }
-
-var templateOG = (data) => {
-  var json = JSON.stringify(data);
-  return (`
-  <div class="site-description">
-    <h3 class="title">${data.title}</h3>
-    <p class="description">${data.description}</p>
-    <a href="${data.url}" target="_blank" class="url">${data.url}</a>
-  </div>
-  <div class="action-container">
-    <button data-bookmark='${json}' id="save-btn" class="btn btn-primary">Save</button>
-  </div>
-  `);
-}
-
-var template = (data) => {
-    var json = JSON.stringify(data);
-    return (`
-  <form name="save-page" id="formSavePage">
-  <div class="site-description">
-        <input type="hidden" name="url" value="${data.url}">
-        <input type="hidden" name="title" value="${data.title}">
-        <textarea name="description" style="display:block;width:100%;height:75px;background-color:#444";border:1px #efefef;">${data.description}</textarea>
-  </div>
-  <div class="action-container">
-    <button data-bookmark='${json}' id="save-btn" class="btn btn-primary">Save</button>
-  </div>
-  </form>
-  `);
-}
-
-var login_form = () => {
-    return (`
-  <div>
-    <form id="troovyLoginForm" name="troovyLoginForm">
-        <label>Email</label>
-        <div class="form-group" style="margin-bottom: 15px">
-            <input type="text" name="username" id="username" value="" placeholder="email"/>
-        </div>
-        <label>Password</label>
-        <div class="form-group" style="margin-bottom: 15px">
-            <input type="password" name="password" value="" placeholder="password"/>
-        </div>
-        <button class="btn btn-primary" id="btn-login" type="submit" style="margin-bottom: 15px">Login</button>
-    </form>
-  </div>
-  `);
-}
-
-var renderCategorySelect = (t) => {
-    var categoryForm = document.getElementById("category-form");
-    var formHTML;
-    for (var i = 0, len = t.length; i < len; i++) {
-        formHTML += '<option value="' + t[i]['id'] + '">' + t[i]['name'] + '</option>';
-    }
-    categoryForm.innerHTML = `
-        <form name="categories">
-            <!--<label>Category</label>-->
-            <select name="category" id="cat-select">
-            ${formHTML}
-            </select>
-        </form>
-    `;
-}
-
-var renderMessage = (message) => {
-  var displayContainer = document.getElementById("display-container");
-  displayContainer.innerHTML = `<p class='message'>${message}</p>`;
-}
-
-var renderBookmark = (data) => {
-    var displayContainer = document.getElementById("display-container");
-    var titleContainer = document.getElementById("title-container");
-  if(data) {
-    var tmpl = template(data);
-      titleContainer.innerHTML = "<h3 class='title'>" + data.title + "</h3>";
-      get_categories();
-      displayContainer.innerHTML = tmpl;
-  } else {
-    renderMessage("Sorry, could not extract this page's title and URL");
+      }
+    };
   }
 }
 
-ext.tabs.query({active: true, currentWindow: true}, function(tabs) {
-  var activeTab = tabs[0];
+ext.tabs.query({active: true, currentWindow: true}, tabs => {
+  let activeTab = tabs[0];
   //chrome.tabs.sendMessage(activeTab.id, { action: 'process-page' }, renderBookmark);
 });
 
-popup.addEventListener("click", function(e) {
-  if(e.target && e.target.matches("#save-btn")) {
-      e.preventDefault();
-      var data = e.target.getAttribute("data-bookmark");
-      var sel = document.getElementById("cat-select");
-      var cat_id = Number(sel.options[sel.selectedIndex].value);
+popup.addEventListener('click', event => {
+  if (event.target && event.target.matches('#save-btn')) {
+    event.preventDefault();
 
-      var json_obj = JSON.parse( data );
-      json_obj.category_id = cat_id;
-      data = JSON.stringify( json_obj );
+    let data   = {
+      title      : document.getElementById('bookmark-title').value,
+      url        : document.getElementById('bookmark-url').value,
+      description: document.getElementById('bookmark-description').value
+    };
+    let sel    = document.getElementById('cat-select');
 
-    ext.runtime.sendMessage({ action: "perform-save", data: data }, function(response) {
-        console.log('message sent');
-        if(response && response.action === "saved") {
-        renderMessage("Your bookmark was saved successfully.");
+    data.category_id = Number(sel.options[sel.selectedIndex].value);
+
+    console.log('Sending request...');
+
+    showLoading();
+    setLoadingText('Saving bookmark');
+
+    ext.runtime.sendMessage({action: 'perform-save', data: data, auth: auth, secret: auth.secret}, response => {
+
+      let message = 'Sorry, there was an error while saving your bookmark.';
+      if (response && response.action === 'saved') {
+        message = 'Your bookmark was saved successfully.';
       } else {
-            console.log(response.action);
-            //renderMessage("Sorry, there was an error while saving your bookmark.");
+        console.log(response.action);
       }
-    })
+
+      showFeedbackMessage(message);
+    });
+
+    return;
+  }
+
+  if (event.target && event.target.matches('#btn-login')) {
+    event.preventDefault();
+
+    let username = document.getElementById('troovyLoginForm').username.value;
+    let password = document.getElementById('troovyLoginForm').password.value;
+
+    showLoading();
+    setLoadingText('Authenticating...');
+
+    auth.getToken(username, password, () => {
+      ext.tabs.query({active: true, currentWindow: true}, tabs => {
+        let activeTab = tabs[0];
+
+        chrome.tabs.sendMessage(activeTab.id, {action: 'process-page'}, renderBookmark);
+      });
+
+      hideLoading();
+    });
   }
 });
 
-popup.addEventListener("click", function(e) {
-    if(e.target && e.target.matches("#btn-login")) {
-        e.preventDefault();
-        var username = document.getElementById("troovyLoginForm").username.value;
-        var password = document.getElementById("troovyLoginForm").password.value;
-        get_troovy_token(username,password);
-    }
+optionsLink.addEventListener('click', event => {
+  event.preventDefault();
+  ext.tabs.create({'url': ext.extension.getURL('options.html')});
 });
 
-var optionsLink = document.querySelector(".js-options");
-optionsLink.addEventListener("click", function(e) {
-  e.preventDefault();
-  ext.tabs.create({'url': ext.extension.getURL('options.html')});
-})
+/**
+ * Helper Classes.
+ * Handle showing/hiding of loading, content and feedback message elements.
+ * This classes are handled separately due to the use of transitions on the styling, to wait for them
+ * and avoid overlapping.
+ */
+function setFeedbackMessage(message) {
+  feedbackMessage.innerHTML = `<p class='message'>${message}</p>`;
+}
+
+function showFeedbackMessage(message) {
+  contentWrapper.classList.add('hide');
+  loadingContainer.classList.add('hide');
+  setTimeout(() => {
+    contentWrapper.style.display   = 'none';
+    loadingContainer.style.display = 'none';
+
+    setFeedbackMessage(message);
+    feedbackMessage.classList.remove('hide');
+  }, 500);
+}
+
+function showLoading() {
+  contentWrapper.classList.add('hide');
+
+  setTimeout(() => {
+    contentWrapper.style.display   = 'none';
+    loadingContainer.style.display = 'block';
+    loadingContainer.classList.remove('hide');
+  }, 500);
+}
+
+function hideLoading() {
+  loadingContainer.classList.add('hide');
+
+  setTimeout(() => {
+    contentWrapper.style.display   = 'block';
+    loadingContainer.style.display = 'none';
+    contentWrapper.classList.remove('hide');
+
+    setLoadingText(''); // Resets text to avoid jumps when showing loading again.
+  }, 500);
+}
+
+function setLoadingText(message = false) {
+  if (message !== false) {
+    loadingContainer.children['progress-text'].innerHTML = message;
+  }
+}
+
